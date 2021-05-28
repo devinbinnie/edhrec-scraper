@@ -1,3 +1,3 @@
-module github.com/devinbinnie/edhrec-scraper
+module github.com/devinbinnie/edhrec-parser
 
 go 1.16
