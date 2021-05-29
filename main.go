@@ -36,16 +36,14 @@ func main() {
 	for key, value := range cardOccurances {
 		// Sort by inclusion rate
 		sort.Slice(value, func(a, b int) bool {
-			return value[b].Price < value[a].Price
+			return value[b].InclusionRate < value[a].InclusionRate
 		})
 
 		// Sum inclusion rate
 		inclusionFactor := float64(0)
 		priceFactor := float64(0)
 		for _, card := range value {
-			if card.InclusionRate >= 0.5 {
-				inclusionFactor += card.InclusionRate
-			}
+			inclusionFactor += card.InclusionRate
 			priceFactor += card.Price
 		}
 
@@ -62,12 +60,19 @@ func main() {
 		return sortedCardOccurances[b].InclusionFactor < sortedCardOccurances[a].InclusionFactor
 	})
 
-	for i := 0; i < 20; i++ {
-		fmt.Println(sortedCardOccurances[i].CommanderName, ":", len(sortedCardOccurances[i].CardList), "cards,", sortedCardOccurances[i].InclusionFactor, "inclusion factor,", sortedCardOccurances[i].PriceFactor, "price factor,")
-		for _, card := range sortedCardOccurances[i].CardList {
+	for _, cardOccurance := range sortedCardOccurances {
+		fmt.Println(cardOccurance.CommanderName, ":", len(cardOccurance.CardList), "cards,", cardOccurance.InclusionFactor, "inclusion factor,", cardOccurance.PriceFactor, "price factor,")
+		for _, card := range cardOccurance.CardList {
 			fmt.Println("- ", card.Name, card.InclusionRate, card.Price)
 		}
 	}
+
+	// for i := 0; i < 20; i++ {
+	// 	fmt.Println(sortedCardOccurances[i].CommanderName, ":", len(sortedCardOccurances[i].CardList), "cards,", sortedCardOccurances[i].InclusionFactor, "inclusion factor,", sortedCardOccurances[i].PriceFactor, "price factor,")
+	// 	for _, card := range sortedCardOccurances[i].CardList {
+	// 		fmt.Println("- ", card.Name, card.InclusionRate, card.Price)
+	// 	}
+	// }
 }
 
 func ReadCards() []string {
@@ -157,17 +162,22 @@ func GetCards(reg *regexp.Regexp, cardName string, client http.Client, cardOccur
 	for _, cardlist := range edhRecJson.Container.JsonDict.CardLists {
 		if cardlist.Tag == "topcommanders" {
 			for _, cardView := range cardlist.CardViews {
-				if _, ok := cardOccurances[cardView.Name]; ok {
-					cardOccurances[cardView.Name] = append(cardOccurances[cardView.Name], MakeCardCandidate(cardName, edhRecJson, cardView))
-				} else {
-					cardOccurances[cardView.Name] = []CardCandidate{MakeCardCandidate(cardName, edhRecJson, cardView)}
+				inclusionFactor := float64(cardView.Inclusion) / float64(cardView.PotentialDecks)
+				if inclusionFactor >= 0.5 {
+					cardCandidate := MakeCardCandidate(cardName, edhRecJson, inclusionFactor)
+					if _, ok := cardOccurances[cardView.Name]; ok {
+						cardOccurances[cardView.Name] = append(cardOccurances[cardView.Name], cardCandidate)
+					} else {
+						cardOccurances[cardView.Name] = []CardCandidate{cardCandidate}
+					}
 				}
+
 			}
 		}
 	}
 }
 
-func MakeCardCandidate(cardName string, edhRecJson EDHRecJson, cardView CardView) CardCandidate {
+func MakeCardCandidate(cardName string, edhRecJson EDHRecJson, inclusionFactor float64) CardCandidate {
 	price, ok := edhRecJson.Container.JsonDict.Card.Prices["tcgplayer"].Price.(float64)
 	if !ok {
 		stringPrice, ok := edhRecJson.Container.JsonDict.Card.Prices["tcgplayer"].Price.(string)
@@ -183,6 +193,6 @@ func MakeCardCandidate(cardName string, edhRecJson EDHRecJson, cardView CardView
 	return CardCandidate{
 		Name:          cardName,
 		Price:         price,
-		InclusionRate: float64(cardView.Inclusion) / float64(cardView.PotentialDecks),
+		InclusionRate: inclusionFactor,
 	}
 }
