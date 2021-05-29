@@ -22,7 +22,8 @@ type CardList struct {
 type CardView struct {
 	Name           string
 	Inclusion      int
-	PotentialDecks int `json:"potential_decks"`
+	PotentialDecks int      `json:"potential_decks"`
+	ColorIdentity  []string `json:"color_identity"`
 }
 
 type Card struct {

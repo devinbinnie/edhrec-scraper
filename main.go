@@ -15,7 +15,41 @@ import (
 	"time"
 )
 
+var allowedColorIdentities []string = []string{"W", "WU", "WR", "UR", "BR", "WUB", "WBG", "UBR", "WUBR"}
+
 func main() {
+	FindCommandersByInventory()
+
+	//ListInventoryCardPrices()
+}
+
+func ListInventoryCardPrices() {
+	cards := ReadCards()
+	reg, err := regexp.Compile("[^a-zA-Z0-9\\s\\-]+")
+	if err != nil {
+		log.Fatal(err)
+	}
+	client := http.Client{
+		Timeout: time.Second * 2, // Timeout after 2 seconds
+	}
+
+	cardList := []CardCandidate{}
+
+	for _, card := range cards {
+		edhRecJson := GetEDHRecJsonForCard(reg, card, client)
+		cardList = append(cardList, MakeCardCandidate(card, *edhRecJson, 0))
+	}
+
+	sort.Slice(cardList, func(a, b int) bool {
+		return cardList[b].Price < cardList[a].Price
+	})
+
+	for _, card := range cardList {
+		fmt.Println("1", card.Name)
+	}
+}
+
+func FindCommandersByInventory() {
 	cards := ReadCards()
 	cardOccurances := make(map[string][]CardCandidate)
 	// Make a Regex to say we only want letters and numbers
@@ -29,7 +63,7 @@ func main() {
 	}
 
 	for _, card := range cards {
-		GetCards(reg, card, client, cardOccurances)
+		PopulateCommandersForCard(reg, card, client, cardOccurances)
 	}
 
 	sortedCardOccurances := []CardOccurance{}
@@ -99,7 +133,7 @@ func GetProcessedCardName(reg *regexp.Regexp, cardName string) string {
 	return strings.ToLower(strings.ReplaceAll(reg.ReplaceAllString(cardName, ""), " ", "-"))
 }
 
-func GetCards(reg *regexp.Regexp, cardName string, client http.Client, cardOccurances map[string][]CardCandidate) {
+func GetEDHRecJsonForCard(reg *regexp.Regexp, cardName string, client http.Client) *EDHRecJson {
 	edhRecJson := EDHRecJson{}
 
 	file, err := os.Open(fmt.Sprintf("cache/%s.json", GetProcessedCardName(reg, cardName)))
@@ -112,13 +146,13 @@ func GetCards(reg *regexp.Regexp, cardName string, client http.Client, cardOccur
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			log.Println(err, url)
-			return
+			return nil
 		}
 
 		res, getErr := client.Do(req)
 		if getErr != nil {
 			log.Println(getErr, url)
-			return
+			return nil
 		}
 
 		if res.Body != nil {
@@ -128,12 +162,12 @@ func GetCards(reg *regexp.Regexp, cardName string, client http.Client, cardOccur
 		body, readErr := ioutil.ReadAll(res.Body)
 		if readErr != nil {
 			log.Println(readErr, url)
-			return
+			return nil
 		}
 		jsonErr := json.Unmarshal(body, &edhRecJson)
 		if jsonErr != nil {
 			log.Println(jsonErr, url)
-			return
+			return nil
 		}
 
 		log.Println("Successfully read", url)
@@ -149,22 +183,32 @@ func GetCards(reg *regexp.Regexp, cardName string, client http.Client, cardOccur
 		body, readErr := ioutil.ReadAll(file)
 		if readErr != nil {
 			log.Println(readErr, cardName)
-			return
+			return nil
 		}
 
 		jsonErr := json.Unmarshal(body, &edhRecJson)
 		if jsonErr != nil {
 			log.Println(jsonErr, cardName)
-			return
+			return nil
 		}
+	}
+
+	return &edhRecJson
+}
+
+func PopulateCommandersForCard(reg *regexp.Regexp, cardName string, client http.Client, cardOccurances map[string][]CardCandidate) {
+	edhRecJson := GetEDHRecJsonForCard(reg, cardName, client)
+	if edhRecJson == nil {
+		return
 	}
 
 	for _, cardlist := range edhRecJson.Container.JsonDict.CardLists {
 		if cardlist.Tag == "topcommanders" {
 			for _, cardView := range cardlist.CardViews {
 				inclusionFactor := float64(cardView.Inclusion) / float64(cardView.PotentialDecks)
-				if inclusionFactor >= 0.5 {
-					cardCandidate := MakeCardCandidate(cardName, edhRecJson, inclusionFactor)
+				colorIdentity := strings.Join(cardView.ColorIdentity, "")
+				if inclusionFactor >= 0.5 && contains(allowedColorIdentities, colorIdentity) {
+					cardCandidate := MakeCardCandidate(cardName, *edhRecJson, inclusionFactor)
 					if _, ok := cardOccurances[cardView.Name]; ok {
 						cardOccurances[cardView.Name] = append(cardOccurances[cardView.Name], cardCandidate)
 					} else {
@@ -178,6 +222,14 @@ func GetCards(reg *regexp.Regexp, cardName string, client http.Client, cardOccur
 }
 
 func MakeCardCandidate(cardName string, edhRecJson EDHRecJson, inclusionFactor float64) CardCandidate {
+	return CardCandidate{
+		Name:          cardName,
+		Price:         GetCardPrice(edhRecJson),
+		InclusionRate: inclusionFactor,
+	}
+}
+
+func GetCardPrice(edhRecJson EDHRecJson) float64 {
 	price, ok := edhRecJson.Container.JsonDict.Card.Prices["tcgplayer"].Price.(float64)
 	if !ok {
 		stringPrice, ok := edhRecJson.Container.JsonDict.Card.Prices["tcgplayer"].Price.(string)
@@ -190,9 +242,14 @@ func MakeCardCandidate(cardName string, edhRecJson EDHRecJson, inclusionFactor f
 		}
 		price = convertedPrice
 	}
-	return CardCandidate{
-		Name:          cardName,
-		Price:         price,
-		InclusionRate: inclusionFactor,
+	return price
+}
+
+func contains(arr []string, str string) bool {
+	for _, a := range arr {
+		if a == str {
+			return true
+		}
 	}
+	return false
 }
