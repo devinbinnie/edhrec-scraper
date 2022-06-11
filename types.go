@@ -2,10 +2,26 @@ package main
 
 type EDHRecJson struct {
 	Container Container
+	Panels    Panels
 }
 
 type Container struct {
 	JsonDict JsonDict `json:"json_dict"`
+}
+
+type Panels struct {
+	TribeLinks TribeLinks `json:"tribelinks"`
+}
+
+type TribeLinks struct {
+	Budget []Variant
+	Themes []Variant
+}
+
+type Variant struct {
+	Count      int
+	HrefSuffix string `json:"href-suffix"`
+	Value      string
 }
 
 type JsonDict struct {
@@ -22,7 +38,8 @@ type CardList struct {
 type CardView struct {
 	Name           string
 	Inclusion      int
-	PotentialDecks int      `json:"potential_decks"`
+	PotentialDecks int `json:"potential_decks"`
+	Sanitized      string
 	ColorIdentity  []string `json:"color_identity"`
 }
 

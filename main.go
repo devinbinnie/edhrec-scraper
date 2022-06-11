@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -15,16 +16,52 @@ import (
 	"time"
 )
 
-var allowedColorIdentities []string = []string{"W", "WU", "WR", "UR", "BR", "WUB", "WBG", "UBR", "WUBR"}
+var allowedColorIdentities []string = []string{
+	"W",
+	// "U",
+	// "B",
+	// "R",
+	// "G",
+
+	// "WU",
+	// "UB",
+	// "BR",
+	// "RW",
+	// "RG",
+	// "GW",
+	// "WB",
+	// "UR",
+	// "BG",
+	// "GU",
+
+	// "WUB",
+	"UBR",
+	// "BRG",
+	// "RGW",
+	// "GWU",
+	"WBG",
+	// "URW",
+	// "BGU",
+	// "RWB",
+	// "GUR",
+
+	"WUBR",
+	"UBRG",
+	"BRGW",
+	"RGWU",
+	"GWUB",
+
+	// "WUBRG",
+}
 
 func main() {
-	FindCommandersByInventory()
-
+	FindTopCardsByInventory()
+	//FindCommandersByInventory()
 	//ListInventoryCardPrices()
 }
 
 func ListInventoryCardPrices() {
-	cards := ReadCards()
+	cards := ReadCardsAndRemoveDupes()
 	reg, err := regexp.Compile("[^a-zA-Z0-9\\s\\-]+")
 	if err != nil {
 		log.Fatal(err)
@@ -36,8 +73,8 @@ func ListInventoryCardPrices() {
 	cardList := []CardCandidate{}
 
 	for _, card := range cards {
-		edhRecJson := GetEDHRecJsonForCard(reg, card, client)
-		cardList = append(cardList, MakeCardCandidate(card, *edhRecJson, 0))
+		edhRecJson := GetEDHRecJsonForPath(GetPathForCard(reg, card), client)
+		cardList = append(cardList, MakeCardCandidate(card, GetCardPrice(*edhRecJson), 0))
 	}
 
 	sort.Slice(cardList, func(a, b int) bool {
@@ -49,23 +86,7 @@ func ListInventoryCardPrices() {
 	}
 }
 
-func FindCommandersByInventory() {
-	cards := ReadCards()
-	cardOccurances := make(map[string][]CardCandidate)
-	// Make a Regex to say we only want letters and numbers
-	reg, err := regexp.Compile("[^a-zA-Z0-9\\s\\-]+")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	client := http.Client{
-		Timeout: time.Second * 2, // Timeout after 2 seconds
-	}
-
-	for _, card := range cards {
-		PopulateCommandersForCard(reg, card, client, cardOccurances)
-	}
-
+func SortAndPrintCardOccurances(cardOccurances map[string][]CardCandidate) {
 	sortedCardOccurances := []CardOccurance{}
 	for key, value := range cardOccurances {
 		// Sort by inclusion rate
@@ -91,7 +112,8 @@ func FindCommandersByInventory() {
 	}
 
 	sort.Slice(sortedCardOccurances, func(a, b int) bool {
-		return sortedCardOccurances[b].InclusionFactor < sortedCardOccurances[a].InclusionFactor
+		return len(sortedCardOccurances[b].CardList) < len(sortedCardOccurances[a].CardList)
+		//return sortedCardOccurances[b].InclusionFactor < sortedCardOccurances[a].InclusionFactor
 	})
 
 	for _, cardOccurance := range sortedCardOccurances {
@@ -109,7 +131,47 @@ func FindCommandersByInventory() {
 	// }
 }
 
-func ReadCards() []string {
+func FindTopCardsByInventory() {
+	cards := ReadCardsAndRemoveDupes()
+	cardOccurances := make(map[string][]CardCandidate)
+	// Make a Regex to say we only want letters and numbers
+	reg, err := regexp.Compile("[^a-zA-Z0-9\\s\\-]+")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	client := http.Client{
+		Timeout: time.Second * 2, // Timeout after 2 seconds
+	}
+
+	for _, color := range allowedColorIdentities {
+		PopulateCardsForCommandersByColor(color, cards, reg, client, cardOccurances)
+	}
+
+	SortAndPrintCardOccurances(cardOccurances)
+}
+
+func FindCommandersByInventory() {
+	cards := ReadCardsAndRemoveDupes()
+	cardOccurances := make(map[string][]CardCandidate)
+	// Make a Regex to say we only want letters and numbers
+	reg, err := regexp.Compile("[^a-zA-Z0-9\\s\\-]+")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	client := http.Client{
+		Timeout: time.Second * 2, // Timeout after 2 seconds
+	}
+
+	for _, card := range cards {
+		PopulateCommandersForCard(reg, card, client, cardOccurances)
+	}
+
+	SortAndPrintCardOccurances(cardOccurances)
+}
+
+func ReadCardsAndRemoveDupes() []string {
 	cards := []string{}
 	file, err := os.Open("cardlist.txt")
 	if err != nil {
@@ -122,26 +184,58 @@ func ReadCards() []string {
 		cards = append(cards, strings.Replace(scanner.Text(), "1 ", "", 1))
 	}
 
+	// Remove duplicates
+	keys := make(map[string]bool)
+	list := []string{}
+
+	// If the key(values of the slice) is not equal
+	// to the already present value in new slice (list)
+	// then we append it. else we jump on another element.
+	for _, entry := range cards {
+		if _, value := keys[entry]; !value {
+			keys[entry] = true
+			list = append(list, entry)
+		}
+	}
+	cards = list
+
 	return cards
 }
 
-func GetEDHRecJsonURL(reg *regexp.Regexp, cardName string) string {
-	return fmt.Sprintf("https://edhrec-json.s3.amazonaws.com/en/cards/%s.json", GetProcessedCardName(reg, cardName))
+func GetPathForCard(reg *regexp.Regexp, cardName string) string {
+	return fmt.Sprintf("cards/%s.json", GetProcessedCardName(reg, cardName))
+}
+
+func GetPathForCommander(reg *regexp.Regexp, cardName string) string {
+	return fmt.Sprintf("commanders/%s.json", GetProcessedCardName(reg, cardName))
+}
+
+func GetPathForCommanderVariant(reg *regexp.Regexp, cardName string, subpath string) string {
+	return fmt.Sprintf("commanders/%s%s.json", GetProcessedCardName(reg, cardName), subpath)
+}
+
+func GetPathForCommandersByColor(colors string) string {
+	return fmt.Sprintf("commanders/%s.json", strings.ToLower(colors))
+}
+
+func GetEDHRecJsonURL(path string) string {
+	return fmt.Sprintf("https://json.edhrec.com/v2/%s", path)
 }
 
 func GetProcessedCardName(reg *regexp.Regexp, cardName string) string {
 	return strings.ToLower(strings.ReplaceAll(reg.ReplaceAllString(cardName, ""), " ", "-"))
 }
 
-func GetEDHRecJsonForCard(reg *regexp.Regexp, cardName string, client http.Client) *EDHRecJson {
+func GetEDHRecJsonForPath(path string, client http.Client) *EDHRecJson {
 	edhRecJson := EDHRecJson{}
+	outputPath := fmt.Sprintf("cache/%s", path)
 
-	file, err := os.Open(fmt.Sprintf("cache/%s.json", GetProcessedCardName(reg, cardName)))
+	file, err := os.Open(outputPath)
 	if err != nil {
 		file.Close()
 
 		// Download file
-		url := GetEDHRecJsonURL(reg, cardName)
+		url := GetEDHRecJsonURL(path)
 
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
@@ -172,23 +266,27 @@ func GetEDHRecJsonForCard(reg *regexp.Regexp, cardName string, client http.Clien
 
 		log.Println("Successfully read", url)
 
-		// TODO: write out JSON to file
-		writeErr := ioutil.WriteFile(fmt.Sprintf("cache/%s.json", GetProcessedCardName(reg, cardName)), body, 0644)
+		dirErr := os.MkdirAll(filepath.Dir(outputPath), 0644)
+		if dirErr != nil {
+			log.Println(dirErr, url)
+			return nil
+		}
+		writeErr := ioutil.WriteFile(outputPath, body, 0644)
 		if writeErr != nil {
-			log.Println(writeErr, "Failed to write", fmt.Sprintf("cache/%s.json", GetProcessedCardName(reg, cardName)))
+			log.Println(writeErr, "Failed to write", outputPath)
 		}
 	} else {
 		defer file.Close()
 
 		body, readErr := ioutil.ReadAll(file)
 		if readErr != nil {
-			log.Println(readErr, cardName)
+			log.Println(readErr, path)
 			return nil
 		}
 
 		jsonErr := json.Unmarshal(body, &edhRecJson)
 		if jsonErr != nil {
-			log.Println(jsonErr, cardName)
+			log.Println(jsonErr, path)
 			return nil
 		}
 	}
@@ -196,8 +294,48 @@ func GetEDHRecJsonForCard(reg *regexp.Regexp, cardName string, client http.Clien
 	return &edhRecJson
 }
 
+func PopulateCardsForCommandersByColor(color string, cards []string, reg *regexp.Regexp, client http.Client, cardOccurances map[string][]CardCandidate) {
+	colorJson := GetEDHRecJsonForPath(GetPathForCommandersByColor(color), client)
+	if colorJson == nil {
+		return
+	}
+
+	for _, commander := range colorJson.Container.JsonDict.CardLists[0].CardViews {
+		if !strings.Contains(commander.Name, "Tymna") { // I don't want to play Tymna
+			commanderJson := GetEDHRecJsonForPath(GetPathForCommander(reg, commander.Sanitized), client)
+			PopulateCardsForCommander(cards, reg, client, commander.Name, *commanderJson, cardOccurances)
+			for _, variant := range commanderJson.Panels.TribeLinks.Budget {
+				commanderVariantJson := GetEDHRecJsonForPath(GetPathForCommanderVariant(reg, commander.Sanitized, variant.HrefSuffix), client)
+				PopulateCardsForCommander(cards, reg, client, fmt.Sprintf("%s - %s", commander.Name, variant.Value), *commanderVariantJson, cardOccurances)
+			}
+			for _, variant := range commanderJson.Panels.TribeLinks.Themes {
+				commanderVariantJson := GetEDHRecJsonForPath(GetPathForCommanderVariant(reg, commander.Sanitized, variant.HrefSuffix), client)
+				PopulateCardsForCommander(cards, reg, client, fmt.Sprintf("%s - %s", commander.Name, variant.Value), *commanderVariantJson, cardOccurances)
+			}
+		}
+	}
+}
+
+func PopulateCardsForCommander(cards []string, reg *regexp.Regexp, client http.Client, commanderName string, commanderJson EDHRecJson, cardOccurances map[string][]CardCandidate) {
+	for _, cardList := range commanderJson.Container.JsonDict.CardLists {
+		if cardList.Tag == "highsynergycards" || cardList.Tag == "topcards" {
+			for _, card := range cardList.CardViews {
+				if contains(cards, card.Name) {
+					inclusionFactor := float64(card.Inclusion) / float64(card.PotentialDecks)
+					cardCandidate := MakeCardCandidate(card.Name, 0.0, inclusionFactor)
+					if _, ok := cardOccurances[commanderName]; ok {
+						cardOccurances[commanderName] = append(cardOccurances[commanderName], cardCandidate)
+					} else {
+						cardOccurances[commanderName] = []CardCandidate{cardCandidate}
+					}
+				}
+			}
+		}
+	}
+}
+
 func PopulateCommandersForCard(reg *regexp.Regexp, cardName string, client http.Client, cardOccurances map[string][]CardCandidate) {
-	edhRecJson := GetEDHRecJsonForCard(reg, cardName, client)
+	edhRecJson := GetEDHRecJsonForPath(GetPathForCard(reg, cardName), client)
 	if edhRecJson == nil {
 		return
 	}
@@ -207,8 +345,8 @@ func PopulateCommandersForCard(reg *regexp.Regexp, cardName string, client http.
 			for _, cardView := range cardlist.CardViews {
 				inclusionFactor := float64(cardView.Inclusion) / float64(cardView.PotentialDecks)
 				colorIdentity := strings.Join(cardView.ColorIdentity, "")
-				if inclusionFactor >= 0.5 && contains(allowedColorIdentities, colorIdentity) {
-					cardCandidate := MakeCardCandidate(cardName, *edhRecJson, inclusionFactor)
+				if contains(allowedColorIdentities, colorIdentity) {
+					cardCandidate := MakeCardCandidate(cardName, GetCardPrice(*edhRecJson), inclusionFactor)
 					if _, ok := cardOccurances[cardView.Name]; ok {
 						cardOccurances[cardView.Name] = append(cardOccurances[cardView.Name], cardCandidate)
 					} else {
@@ -221,10 +359,10 @@ func PopulateCommandersForCard(reg *regexp.Regexp, cardName string, client http.
 	}
 }
 
-func MakeCardCandidate(cardName string, edhRecJson EDHRecJson, inclusionFactor float64) CardCandidate {
+func MakeCardCandidate(cardName string, price float64, inclusionFactor float64) CardCandidate {
 	return CardCandidate{
 		Name:          cardName,
-		Price:         GetCardPrice(edhRecJson),
+		Price:         price,
 		InclusionRate: inclusionFactor,
 	}
 }
